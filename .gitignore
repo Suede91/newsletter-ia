@@ -1,0 +1,19 @@
+# Secrets
+.env
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+env/
+
+# Logs & runtime state
+*.log
+last_run.json
+
+# OS / IDE
+.DS_Store
+.vscode/
+.idea/
