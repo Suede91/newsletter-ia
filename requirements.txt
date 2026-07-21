@@ -1,5 +1,7 @@
 smolagents>=1.9.0
-litellm>=1.0.0
+# < 1.93 : à partir de 1.93.0 litellm ne publie que des sdist qui exigent un
+# toolchain Rust pour compiler (build depuis les sources). On reste sur un wheel.
+litellm>=1.0.0,<1.93
 requests>=2.31.0
 python-dotenv>=1.0.0
 ddgs>=6.0.0
