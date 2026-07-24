@@ -53,8 +53,9 @@ def send_to_teams(
 
     response = requests.post(webhook_url, json=payload, timeout=timeout)
 
-    # Un webhook Teams renvoie 200 avec le corps "1" en cas de succès.
-    if response.status_code != 200:
+    # Un Incoming Webhook Teams classique renvoie 200 ("1") ; un flux Power
+    # Automate ("Workflows") renvoie 202 Accepted. On accepte donc tout 2xx.
+    if not (200 <= response.status_code < 300):
         raise RuntimeError(
             f"Échec de l'envoi Teams (status {response.status_code}): {response.text[:500]}"
         )

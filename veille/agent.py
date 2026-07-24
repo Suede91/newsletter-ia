@@ -13,10 +13,11 @@ import logging
 from smolagents import CodeAgent, LiteLLMModel
 
 try:
-    # Nom actuel de l'outil de recherche web fourni par smolagents.
-    from smolagents import WebSearchTool as _SearchTool
-except ImportError:  # pragma: no cover - compat versions plus anciennes
+    # Backend basé sur le package `ddgs` : fiable en pratique. Le `WebSearchTool`
+    # par défaut scrape lite.duckduckgo.com et renvoie souvent 0 résultat.
     from smolagents import DuckDuckGoSearchTool as _SearchTool
+except ImportError:  # pragma: no cover - fallback si ddgs indisponible
+    from smolagents import WebSearchTool as _SearchTool
 
 logger = logging.getLogger(__name__)
 
@@ -58,6 +59,24 @@ Le rapport doit être concis, factuel, et chaque affirmation doit s'appuyer sur 
 Utilise `final_answer(<markdown>)` pour renvoyer le rapport."""
 
 
+def _sanitize_report(report: str) -> str:
+    """Nettoie le rapport final.
+
+    Si l'agent atteint `max_steps` sans appel propre à `final_answer`, smolagents
+    peut renvoyer le littéral de code `final_answer(<markdown>)`. On retire alors
+    ce wrapper pour n'envoyer que le markdown.
+    """
+    text = report.strip()
+    if text.startswith("final_answer(") and text.endswith(")"):
+        text = text[len("final_answer(") : -1].strip()
+        # Retire d'éventuels guillemets triples/simples entourant le contenu.
+        for quote in ('"""', "'''", '"', "'"):
+            if text.startswith(quote) and text.endswith(quote) and len(text) >= 2 * len(quote):
+                text = text[len(quote) : -len(quote)].strip()
+                break
+    return text
+
+
 def run_veille(model_id: str, api_key: str, max_steps: int = 12) -> str:
     """Exécute l'agent de veille et renvoie le rapport markdown final."""
     model = LiteLLMModel(model_id=model_id, api_key=api_key)
@@ -69,7 +88,7 @@ def run_veille(model_id: str, api_key: str, max_steps: int = 12) -> str:
 
     logger.info("Lancement de l'agent de veille (modèle=%s, max_steps=%d).", model_id, max_steps)
     result = agent.run(_build_prompt())
-    report = str(result).strip()
+    report = _sanitize_report(str(result))
 
     if not report:
         raise RuntimeError("L'agent a renvoyé un rapport vide.")
