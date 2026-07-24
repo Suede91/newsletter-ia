@@ -67,8 +67,11 @@ def _sanitize_report(report: str) -> str:
     ce wrapper pour n'envoyer que le markdown.
     """
     text = report.strip()
-    if text.startswith("final_answer(") and text.endswith(")"):
-        text = text[len("final_answer(") : -1].strip()
+    if text.startswith("final_answer("):
+        text = text[len("final_answer(") :].strip()
+        # Retire la parenthèse fermante de l'appel si elle est en fin de chaîne.
+        if text.endswith(")"):
+            text = text[:-1].strip()
         # Retire d'éventuels guillemets triples/simples entourant le contenu.
         for quote in ('"""', "'''", '"', "'"):
             if text.startswith(quote) and text.endswith(quote) and len(text) >= 2 * len(quote):
