@@ -1,5 +1,6 @@
 name: Veille IA hebdomadaire
 
+# Veille LLM/IA hebdomadaire postée sur Teams (voir README).
 on:
   schedule:
     # Tous les lundis à 07:00 UTC (~09:00 Paris été / 08:00 hiver).
