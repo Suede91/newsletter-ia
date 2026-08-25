@@ -80,9 +80,14 @@ def _sanitize_report(report: str) -> str:
     return text
 
 
-def run_veille(model_id: str, api_key: str, max_steps: int = 12) -> str:
-    """Exécute l'agent de veille et renvoie le rapport markdown final."""
-    model = LiteLLMModel(model_id=model_id, api_key=api_key)
+def run_veille(model_id: str, max_steps: int = 12) -> str:
+    """Exécute l'agent de veille et renvoie le rapport markdown final.
+
+    L'authentification Anthropic n'est pas passée explicitement : litellm la
+    résout depuis l'environnement, soit `ANTHROPIC_API_KEY` (en-tête x-api-key),
+    soit `ANTHROPIC_AUTH_TOKEN` (en-tête Authorization: Bearer, fédération OIDC).
+    """
+    model = LiteLLMModel(model_id=model_id)
     agent = CodeAgent(
         tools=[_SearchTool()],
         model=model,

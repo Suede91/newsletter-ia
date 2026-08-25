@@ -12,6 +12,9 @@ jobs:
   veille:
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    permissions:
+      contents: read
+      id-token: write        # requis pour obtenir un token OIDC GitHub
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -27,10 +30,49 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
+      # Récupère un token OIDC GitHub pour l'audience Anthropic.
+      - name: Fetch GitHub OIDC token
+        uses: actions/github-script@v8
+        with:
+          script: |
+            const token = await core.getIDToken('https://api.anthropic.com');
+            core.setSecret(token);
+            core.exportVariable('JWT', token);
+
+      # Échange le token OIDC contre un access token Anthropic (fédération WIF).
+      # IDs issus de la configuration "identité de charge" du console Anthropic.
+      - name: Exchange OIDC token for an Anthropic access token
+        env:
+          FEDERATION_RULE_ID: fdrl_01Rao1NXRJD1Rfxw9mZRw93w
+          ORGANIZATION_ID: e7e8142f-526d-4a08-9a6b-3e1b43c59914
+          SERVICE_ACCOUNT_ID: svac_01UPz4d5J2zkRgWYnRdZefAx
+          WORKSPACE_ID: wrkspc_015LqWMdB4s8YqB2xwC6nizi
+        run: |
+          ACCESS_TOKEN=$(curl -sS https://api.anthropic.com/v1/oauth/token \
+            -H "content-type: application/json" \
+            --data @- <<JSON | jq -r '.access_token'
+          {
+            "grant_type": "urn:ietf:params:oauth:grant-type:jwt-bearer",
+            "assertion": "${JWT}",
+            "federation_rule_id": "${FEDERATION_RULE_ID}",
+            "organization_id": "${ORGANIZATION_ID}",
+            "service_account_id": "${SERVICE_ACCOUNT_ID}",
+            "workspace_id": "${WORKSPACE_ID}"
+          }
+          JSON
+          )
+          if [ -z "$ACCESS_TOKEN" ] || [ "$ACCESS_TOKEN" = "null" ]; then
+            echo "::error::Échec de l'échange OIDC : aucun access_token reçu."
+            exit 1
+          fi
+          echo "::add-mask::$ACCESS_TOKEN"
+          echo "ANTHROPIC_AUTH_TOKEN=$ACCESS_TOKEN" >> "$GITHUB_ENV"
+
       - name: Run veille
         env:
-          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          # ANTHROPIC_AUTH_TOKEN est injecté par l'étape d'échange ci-dessus
+          # (via $GITHUB_ENV) → litellm l'envoie en Authorization: Bearer.
           TEAMS_WEBHOOK_URL: ${{ secrets.TEAMS_WEBHOOK_URL }}
           MODEL_ID: ${{ vars.MODEL_ID || 'anthropic/claude-sonnet-5' }}
-          AGENT_MAX_STEPS: ${{ vars.AGENT_MAX_STEPS || '12' }}
+          AGENT_MAX_STEPS: ${{ vars.AGENT_MAX_STEPS || '15' }}
         run: python main.py

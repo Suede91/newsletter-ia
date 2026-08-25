@@ -33,14 +33,24 @@ def _get_env(name: str, default: str | None = None, required: bool = False) -> s
 def main() -> int:
     load_dotenv()
 
-    api_key = _get_env("ANTHROPIC_API_KEY", required=True)
+    # Auth Anthropic : soit une clé classique (ANTHROPIC_API_KEY, en-tête
+    # x-api-key, usage local via .env), soit un access token de fédération
+    # OIDC/WIF (ANTHROPIC_AUTH_TOKEN, en-tête Authorization: Bearer, CI GitHub).
+    # litellm résout automatiquement l'un ou l'autre depuis l'environnement.
+    if not os.getenv("ANTHROPIC_API_KEY") and not os.getenv("ANTHROPIC_AUTH_TOKEN"):
+        logger.error(
+            "Auth Anthropic manquante : définir ANTHROPIC_API_KEY (clé) "
+            "ou ANTHROPIC_AUTH_TOKEN (access token OIDC/WIF)."
+        )
+        sys.exit(1)
+
     webhook_url = _get_env("TEAMS_WEBHOOK_URL", required=True)
     model_id = _get_env("MODEL_ID", default="anthropic/claude-sonnet-5")
-    max_steps = int(_get_env("AGENT_MAX_STEPS", default="12"))
+    max_steps = int(_get_env("AGENT_MAX_STEPS", default="15"))
 
     # 1. Génération du rapport par l'agent.
     try:
-        report = run_veille(model_id=model_id, api_key=api_key, max_steps=max_steps)
+        report = run_veille(model_id=model_id, max_steps=max_steps)
     except Exception:
         logger.exception("Échec de la génération du rapport par l'agent.")
         return 1
