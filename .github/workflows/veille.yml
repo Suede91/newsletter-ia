@@ -48,9 +48,9 @@ jobs:
           SERVICE_ACCOUNT_ID: svac_01UPz4d5J2zkRgWYnRdZefAx
           WORKSPACE_ID: wrkspc_015LqWMdB4s8YqB2xwC6nizi
         run: |
-          ACCESS_TOKEN=$(curl -sS https://api.anthropic.com/v1/oauth/token \
+          RESPONSE=$(curl -sS https://api.anthropic.com/v1/oauth/token \
             -H "content-type: application/json" \
-            --data @- <<JSON | jq -r '.access_token'
+            --data @- <<JSON
           {
             "grant_type": "urn:ietf:params:oauth:grant-type:jwt-bearer",
             "assertion": "${JWT}",
@@ -61,8 +61,11 @@ jobs:
           }
           JSON
           )
-          if [ -z "$ACCESS_TOKEN" ] || [ "$ACCESS_TOKEN" = "null" ]; then
+          ACCESS_TOKEN=$(printf '%s' "$RESPONSE" | jq -r '.access_token // empty')
+          if [ -z "$ACCESS_TOKEN" ]; then
             echo "::error::Échec de l'échange OIDC : aucun access_token reçu."
+            echo "Réponse Anthropic (sans secret) :"
+            printf '%s\n' "$RESPONSE" | jq 'with_entries(if (.key | test("token$")) then .value = "<redacted>" else . end)' || printf '%s\n' "$RESPONSE"
             exit 1
           fi
           echo "::add-mask::$ACCESS_TOKEN"
