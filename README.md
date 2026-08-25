@@ -67,6 +67,12 @@ manuellement (`workflow_dispatch`). Configurer dans les paramètres du repo :
   borne le nombre d'étapes.
 - **Bruit / doublons** : le prompt filtre et déduplique ; itérer dessus si besoin.
   Une mémoire simple (JSON des items déjà couverts) pourra être ajoutée en V2.
+- **Rien plutôt qu'un message inutile** : si la recherche échoue (rate-limiting)
+  ou qu'aucune actualité notable n'est trouvée, l'agent renvoie le jeton
+  `NO_NOTABLE_NEWS` et `is_publishable()` bloque l'envoi. Un rapport n'est publié
+  que s'il ne contient aucun marqueur d'échec et cite ≥ 2 URLs sources.
+  La recherche est en plus enrobée de retries/backoff pour absorber les échecs
+  transitoires. Résultat : le run reste vert, mais **rien n'est posté** sur Teams.
 - **Échec webhook** : le status code est toujours vérifié et loggé ; le rapport
   est loggé avant l'envoi.
 

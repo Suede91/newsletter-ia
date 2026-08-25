@@ -12,7 +12,7 @@ import sys
 
 from dotenv import load_dotenv
 
-from veille.agent import run_veille
+from veille.agent import is_publishable, run_veille
 from veille.teams import send_to_teams
 
 logging.basicConfig(
@@ -57,7 +57,17 @@ def main() -> int:
 
     logger.info("----- Rapport généré -----\n%s\n--------------------------", report)
 
-    # 2. Envoi sur Teams (étape séparée, vérifiée et loggée).
+    # 2. Filtre de pertinence : on préfère ne RIEN publier plutôt qu'un message
+    #    inutile (recherche en échec, semaine creuse, rapport « impossible »…).
+    publishable, reason = is_publishable(report)
+    if not publishable:
+        logger.warning(
+            "Rapport jugé NON publiable (%s) — aucun message ne sera envoyé sur Teams.",
+            reason,
+        )
+        return 0
+
+    # 3. Envoi sur Teams (étape séparée, vérifiée et loggée).
     try:
         send_to_teams(webhook_url, report)
     except Exception:

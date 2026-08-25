@@ -9,6 +9,8 @@ from __future__ import annotations
 
 import datetime as _dt
 import logging
+import re
+import time
 
 from smolagents import CodeAgent, LiteLLMModel
 
@@ -20,6 +22,63 @@ except ImportError:  # pragma: no cover - fallback si ddgs indisponible
     from smolagents import WebSearchTool as _SearchTool
 
 logger = logging.getLogger(__name__)
+
+# Jeton renvoyé par l'agent lorsqu'il n'a rien de significatif à publier
+# (ou que la recherche web est inexploitable). Sert de signal déterministe
+# pour NE PAS publier sur Teams — voir `is_publishable`.
+NO_REPORT_SENTINEL = "NO_NOTABLE_NEWS"
+
+# Marqueurs textuels typiques d'un rapport « d'échec » que l'on ne veut jamais
+# publier (au cas où l'agent rédigerait quand même une prose au lieu du jeton).
+_FAILURE_MARKERS = (
+    "no results found",
+    "aucun résultat",
+    "aucune source",
+    "impossible à compléter",
+    "impossible de compléter",
+    "impossible de produire",
+    "impossible à produire",
+    "rapport incomplet",
+    "indisponibilité des sources",
+    "n'a retourné aucun",
+    "ne peut être produit",
+    "ne peut s'appuyer",
+    "absence de données",
+)
+
+
+def _make_search_tool(max_retries: int = 4, base_delay: float = 1.5):
+    """Instancie l'outil de recherche et enrobe `forward` de retries/backoff.
+
+    La recherche (DuckDuckGo via `ddgs`) échoue par intermittence sous
+    rate-limiting en renvoyant « No results found ». Un backoff exponentiel
+    (1.5s, 3s, 6s, 12s) absorbe la plupart de ces échecs transitoires.
+    """
+    tool = _SearchTool()
+    original_forward = tool.forward
+
+    def forward_with_retries(*args, **kwargs):
+        last_exc: Exception | None = None
+        for attempt in range(max_retries):
+            try:
+                return original_forward(*args, **kwargs)
+            except Exception as exc:  # noqa: BLE001 - on relaie après épuisement
+                last_exc = exc
+                if attempt < max_retries - 1:
+                    delay = base_delay * (2**attempt)
+                    logger.warning(
+                        "Recherche en échec (tentative %d/%d) : %s — retry dans %.0fs.",
+                        attempt + 1,
+                        max_retries,
+                        exc,
+                        delay,
+                    )
+                    time.sleep(delay)
+        assert last_exc is not None
+        raise last_exc
+
+    tool.forward = forward_with_retries
+    return tool
 
 
 def _build_prompt() -> str:
@@ -54,9 +113,17 @@ Produis UNIQUEMENT un rapport final en markdown, structuré ainsi :
 ### À surveiller
 - Signaux faibles ou annonces à confirmer (optionnel, 0 à 3 items).
 
-Si tu ne trouves rien de significatif, dis-le explicitement plutôt que d'inventer.
-Le rapport doit être concis, factuel, et chaque affirmation doit s'appuyer sur une source trouvée.
-Utilise `final_answer(<markdown>)` pour renvoyer le rapport."""
+RÈGLE IMPORTANTE — absence de résultats :
+Si l'outil de recherche ne renvoie AUCUN résultat exploitable (erreurs « No results found »,
+rate-limiting, contenu non pertinent), OU si tu ne trouves rien de réellement notable et sourcé
+pour la période, alors NE RÉDIGE PAS de rapport expliquant l'absence de données.
+Dans ce cas, renvoie EXACTEMENT ce jeton, seul, sans autre texte :
+{NO_REPORT_SENTINEL}
+Ne l'utilise que dans ce cas ; il empêchera toute publication d'un message inutile.
+
+Sinon, le rapport doit être concis, factuel, et chaque entrée notable doit citer une URL source réelle
+trouvée pendant tes recherches. N'invente jamais de source ni de date.
+Utilise `final_answer(<markdown ou {NO_REPORT_SENTINEL}>)` pour renvoyer ta réponse."""
 
 
 def _sanitize_report(report: str) -> str:
@@ -80,6 +147,35 @@ def _sanitize_report(report: str) -> str:
     return text
 
 
+def is_publishable(report: str, min_sources: int = 2) -> tuple[bool, str]:
+    """Décide si un rapport mérite d'être publié sur Teams.
+
+    On préfère ne RIEN publier plutôt qu'un message non pertinent. Un rapport
+    est jugé publiable seulement s'il :
+      - n'est pas vide et n'est pas le jeton `NO_REPORT_SENTINEL` ;
+      - ne contient aucun marqueur d'échec (`_FAILURE_MARKERS`) ;
+      - cite au moins `min_sources` URLs réelles (preuve d'entrées sourcées).
+
+    Renvoie (publiable, raison) — `raison` explicite le rejet le cas échéant.
+    """
+    text = report.strip()
+    if not text:
+        return False, "rapport vide"
+    if NO_REPORT_SENTINEL in text:
+        return False, "l'agent signale aucune actualité notable (jeton NO_NOTABLE_NEWS)"
+
+    lowered = text.lower()
+    for marker in _FAILURE_MARKERS:
+        if marker in lowered:
+            return False, f"marqueur d'échec détecté : {marker!r}"
+
+    n_sources = len(re.findall(r"https?://", text))
+    if n_sources < min_sources:
+        return False, f"trop peu de sources ({n_sources} < {min_sources})"
+
+    return True, "ok"
+
+
 def run_veille(model_id: str, max_steps: int = 12) -> str:
     """Exécute l'agent de veille et renvoie le rapport markdown final.
 
@@ -89,7 +185,7 @@ def run_veille(model_id: str, max_steps: int = 12) -> str:
     """
     model = LiteLLMModel(model_id=model_id)
     agent = CodeAgent(
-        tools=[_SearchTool()],
+        tools=[_make_search_tool()],
         model=model,
         max_steps=max_steps,
     )
