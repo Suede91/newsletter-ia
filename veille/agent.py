@@ -9,17 +9,25 @@ from __future__ import annotations
 
 import datetime as _dt
 import logging
+import os
 import re
 import time
 
 from smolagents import CodeAgent, LiteLLMModel
 
-try:
-    # Backend basé sur le package `ddgs` : fiable en pratique. Le `WebSearchTool`
-    # par défaut scrape lite.duckduckgo.com et renvoie souvent 0 résultat.
-    from smolagents import DuckDuckGoSearchTool as _SearchTool
-except ImportError:  # pragma: no cover - fallback si ddgs indisponible
-    from smolagents import WebSearchTool as _SearchTool
+
+def _try_import(name: str):
+    try:
+        return getattr(__import__("smolagents", fromlist=[name]), name)
+    except (ImportError, AttributeError):  # pragma: no cover - selon version smolagents
+        return None
+
+
+# Backends de recherche disponibles selon la version de smolagents.
+_GoogleSearchTool = _try_import("GoogleSearchTool")      # Serper / SerpApi (Google)
+_ApiWebSearchTool = _try_import("ApiWebSearchTool")      # Brave Search API
+_WebSearchTool = _try_import("WebSearchTool")            # Exa (engine="exa") / DDG / Bing
+_DuckDuckGoSearchTool = _try_import("DuckDuckGoSearchTool")  # scraping DDG (secours)
 
 logger = logging.getLogger(__name__)
 
@@ -47,14 +55,48 @@ _FAILURE_MARKERS = (
 )
 
 
-def _make_search_tool(max_retries: int = 4, base_delay: float = 1.5):
-    """Instancie l'outil de recherche et enrobe `forward` de retries/backoff.
+def _select_search_tool():
+    """Choisit le backend de recherche selon les clés d'API présentes.
 
-    La recherche (DuckDuckGo via `ddgs`) échoue par intermittence sous
-    rate-limiting en renvoyant « No results found ». Un backoff exponentiel
-    (1.5s, 3s, 6s, 12s) absorbe la plupart de ces échecs transitoires.
+    Les API dédiées (Serper/Brave/Exa) sont fiables depuis la CI. Le scraping
+    DuckDuckGo est bloqué par rate-limiting sur les IP partagées des runners
+    GitHub (cause des rapports vides d'octobre 2026) et ne sert que de dernier
+    recours. Il suffit donc de définir UNE de ces variables d'environnement
+    pour fiabiliser la recherche : SERPER_API_KEY, SERPAPI_API_KEY,
+    BRAVE_API_KEY ou EXA_API_KEY.
     """
-    tool = _SearchTool()
+    if os.getenv("SERPER_API_KEY") and _GoogleSearchTool:
+        logger.info("Recherche : Serper (Google).")
+        return _GoogleSearchTool(provider="serper")
+    if os.getenv("SERPAPI_API_KEY") and _GoogleSearchTool:
+        logger.info("Recherche : SerpApi (Google).")
+        return _GoogleSearchTool(provider="serpapi")
+    if os.getenv("BRAVE_API_KEY") and _ApiWebSearchTool:
+        logger.info("Recherche : Brave Search API.")
+        return _ApiWebSearchTool()
+    if os.getenv("EXA_API_KEY") and _WebSearchTool:
+        logger.info("Recherche : Exa.")
+        return _WebSearchTool(engine="exa")
+
+    logger.warning(
+        "Recherche : DuckDuckGo sans clé d'API — PEU FIABLE depuis la CI "
+        "(rate-limiting). Définis SERPER_API_KEY / BRAVE_API_KEY / EXA_API_KEY "
+        "pour une recherche fiable."
+    )
+    if _DuckDuckGoSearchTool:
+        return _DuckDuckGoSearchTool()
+    if _WebSearchTool:
+        return _WebSearchTool()
+    raise RuntimeError("Aucun outil de recherche disponible dans smolagents.")
+
+
+def _make_search_tool(max_retries: int = 4, base_delay: float = 1.5):
+    """Instancie le backend de recherche choisi et enrobe `forward` de retries.
+
+    Un backoff exponentiel (1.5s, 3s, 6s, 12s) absorbe les échecs transitoires
+    (rate-limiting, erreurs réseau) quel que soit le moteur retenu.
+    """
+    tool = _select_search_tool()
     original_forward = tool.forward
 
     def forward_with_retries(*args, **kwargs):

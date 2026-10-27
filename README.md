@@ -40,7 +40,17 @@ Variables (voir `.env.example`) :
 | `ANTHROPIC_API_KEY`  | Clé API Anthropic                                       |
 | `TEAMS_WEBHOOK_URL`  | URL de l'Incoming Webhook du canal Teams cible          |
 | `MODEL_ID`           | Modèle Claude (format LiteLLM), déf. `anthropic/claude-sonnet-5` |
-| `AGENT_MAX_STEPS`    | Budget d'étapes de l'agent (contrôle du coût), déf. 12  |
+| `AGENT_MAX_STEPS`    | Budget d'étapes de l'agent (contrôle du coût), déf. 15  |
+| `SERPER_API_KEY`     | **Recherche web fiable** (Serper/Google). À défaut : `BRAVE_API_KEY` ou `EXA_API_KEY`. Sans clé → DuckDuckGo, bloqué en CI |
+
+### Recherche web (important)
+
+L'agent choisit automatiquement son moteur selon la clé présente :
+`SERPER_API_KEY` → `BRAVE_API_KEY` → `EXA_API_KEY` → DuckDuckGo (secours).
+**Depuis GitHub Actions, DuckDuckGo (scraping) est bloqué** par rate-limiting sur
+les IP partagées des runners → l'agent ne trouve rien et ne publie rien. Définis
+donc **une** clé d'API de recherche. Recommandé : [Serper](https://serper.dev)
+(résultats Google, free tier généreux, inscription sans carte).
 
 ## Lancement
 
@@ -58,7 +68,8 @@ Codes de sortie : `0` succès · `1` échec génération agent · `2` échec env
 Le workflow tourne chaque lundi à 07:00 UTC et est aussi déclenchable
 manuellement (`workflow_dispatch`). Configurer dans les paramètres du repo :
 
-- **Secrets** : `ANTHROPIC_API_KEY`, `TEAMS_WEBHOOK_URL`
+- **Secrets** : `TEAMS_WEBHOOK_URL`, `SERPER_API_KEY` (recherche fiable). L'auth
+  Anthropic passe par la fédération OIDC (identité de charge), pas par un secret.
 - **Variables** (optionnel) : `MODEL_ID`, `AGENT_MAX_STEPS`
 
 ## Points de vigilance (V1)
